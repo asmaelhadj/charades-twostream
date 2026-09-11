@@ -1,0 +1,224 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+
+\title{%
+  \textbf{Note de synth\`ese\,: performances Charades dans VideoGLUE}\\[0.4em]
+  \large Yuan et al., TMLR 2024 --- Tables~3 \`a~6\\[0.25em]
+  \normalsize\url{https://arxiv.org/abs/2307.03166}
+}
+\author{Asma\\
+  \textit{Superviseur\,: Prof.\ \'Eric Hervet}\\
+  \textit{Alliance Canada --- projet Mitacs}}
+\date{15~juillet~2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Cette note r\'epond \`a la demande d'un r\'esum\'e des performances Charades
+des fondation models (FMs) \'evalu\'es dans VideoGLUE (CLIP, FLAVA, CoCa,
+DINOv2, VATT, VideoMAE, InternVideo), avec leurs caract\'eristiques
+principales et les ressources / co\^{u}ts rapport\'es. \textbf{Oui\,:}
+dans la Table~5 (MLAP), \textbf{58.2\,mAP} est le meilleur r\'esultat
+Charades parmi les FMs, obtenu par \textbf{VATT}.
+\end{abstract}
+
+%==============================================================================
+\section{Contexte}
+%==============================================================================
+
+VideoGLUE \cite{yuan2024videoglue} \'evalue sept FMs sur huit jeux vid\'eo
+(dont Charades, classification multi-label) sous quatre m\'ethodes
+d'adaptation. La Figure~1 du papier est un radar \emph{normalis\'e} (sans
+chiffres bruts)\,; les scores Charades (mAP) sont dans les Tables~3--6.
+
+\textbf{Charades (VC-ML)\,:} $\sim$30\,s / vid\'eo, plusieurs actions
+simultan\'ees, $\sim$7\,811 train / 1\,814 test, 157 classes
+\cite{sigurdsson2016charades}.
+
+%==============================================================================
+\section{Caract\'eristiques principales des mod\`eles}
+%==============================================================================
+
+Tous les FMs sont volontairement \'evalu\'es en \textbf{ViT-B}
+\cite{dosovitskiy2021vit} pour aligner l'architecture et le co\^{u}t relatif
+(Section~3.1).
+
+\begin{table}[h]
+\centering
+\caption{Fondation models \'etudi\'es (d'apr\`es Table~1, VideoGLUE).}
+\label{tab:fm-char}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Mod\`ele & Modalit\'e pretrain & Donn\'ees & Objectif \\
+\midrule
+CLIP & Image + texte & WebImageText & Contrastif \\
+FLAVA & Image + texte & PMD & Contrastif + MIM + MLM \\
+CoCa & Image + texte & JFT-3B + ALIGN & Contrastif + captioning \\
+DINOv2 & Image & LVD-142M & MIM + DINO \\
+VideoMAE & Vid\'eo & Kinetics-400 & Masked video modeling \\
+InternVideo & Vid\'eo & UnlabeledHybrid & MVM + contrastif \\
+VATT & Vid\'eo + audio + texte & HowTo100M & Contrastif \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{Image-native\,:} CLIP, FLAVA, CoCa, DINOv2.
+\textbf{Video-native\,:} VideoMAE, InternVideo, VATT.
+
+\subsection*{M\'ethodes d'adaptation (Tables~3--6)}
+
+\begin{itemize}[nosep]
+  \item \textbf{Table~3 --- End-to-end (E2E)\,:} tout le ViT-B + t\^{e}te entra\^{\i}n\'es.
+  \item \textbf{Table~4 --- Frozen\,:} backbone gel\'e\,; une couche de
+        cross-attention / pooler entra\^{\i}n\'ee.
+  \item \textbf{Table~5 --- MLAP\,:} multi-layer attention pooler
+        (plusieurs features gel\'ees, pooler hi\'erarchique entra\^{\i}n\'e).
+  \item \textbf{Table~6 --- LoRA / low-rank adapter\,:} backbone gel\'e\,;
+        adapters + t\^{e}te entra\^{\i}n\'es.
+\end{itemize}
+
+%==============================================================================
+\section{Performances Charades (mAP)}
+%==============================================================================
+
+\begin{table}[h]
+\centering
+\caption{mAP Charades (\%). Chiffres extraits des Tables~3--6 de VideoGLUE.
+Le meilleur FM par colonne est en gras.}
+\label{tab:charades-map}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Mod\`ele &
+  Table~3 &
+  Table~4 &
+  Table~5 &
+  Table~6 \\
+ & E2E & Frozen & MLAP & LoRA \\
+\midrule
+CLIP        & 54.3 & 11.2 & 41.5 & 44.2 \\
+FLAVA       & 48.6 & 12.6 & 38.2 & 40.8 \\
+CoCa        & 55.0 &  8.8 & 19.6 & 45.8 \\
+DINOv2      & 52.4 & 25.8 & 47.8 & 38.0 \\
+\textbf{VATT} & \textbf{55.7} & \textbf{33.3} & \textbf{58.2} & \textbf{53.5} \\
+VideoMAE    & 51.4 & 11.3 & 35.9 & 43.0 \\
+InternVideo & 52.2 & 13.0 & 40.5 & 46.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{R\'eponse \`a la question Table~5.}
+Oui\,: \textbf{58.2\,\%} est le \textbf{meilleur score Charades parmi les
+sept FMs}, obtenu par \textbf{VATT} avec MLAP. C'est m\^{e}me le meilleur
+score Charades FM toutes tables confondues (au-dessus de VATT E2E~55.7 et
+VATT LoRA~53.5).
+
+\paragraph{Lectures utiles.}
+\begin{itemize}[nosep]
+  \item En E2E, VATT et CoCa dominent Charades\,; VideoMAE atteint 51.4.
+  \item Sous backbone gel\'e (Table~4), les FMs image-native s'effondrent
+        souvent sur Charades\,; VATT reste nettement devant (33.3).
+  \item MLAP (Table~5) r\'ecup\`ere beaucoup pour CLIP/DINOv2, et porte VATT
+        \`a 58.2.
+  \item Video-native FMs sont en g\'en\'eral meilleurs sur Charades quand
+        le backbone est peu ou pas mis \`a jour (motion + multi-label).
+\end{itemize}
+
+%==============================================================================
+\section{Ressources et co\^{u}ts}
+%==============================================================================
+
+\subsection{Ce que VideoGLUE \emph{ne} reporte \emph{pas}}
+
+Le papier \textbf{ne publie pas} le nombre exact de GPUs, ni la m\'emoire
+vid\'eo (VRAM) par carte, pour les runs des Tables~3--6. L'infra est celle
+d'une \'equipe Google DeepMind\,; on peut seulement inf\'erer un entra\^{\i}nement
+\textbf{multi-GPU} \`a partir du protocole (batch~256, ViT-B vid\'eo).
+
+\subsection{Ce qui est report\'e (protocole Charades + Fig.~3)}
+
+\begin{table}[h]
+\centering
+\caption{Hyperparam\`etres Charades (Appendix~D / Table~10).}
+\label{tab:charades-hp}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Param\`etre & Valeur \\
+\midrule
+Architecture & ViT-B (tous les FMs) \\
+Batch size & 256 \\
+Training epochs & 50 \\
+Longueur de s\'equence ViT & $8 \times 14 \times 14$ tokens \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Co\^{u}ts d'adaptation approximatifs (Fig.~3)\,: param\`etres entra\^{\i}nables
+et FLOPs d'inf\'erence. Les auteurs notent que, ViT-B + m\^{e}me longueur de
+s\'equence $\Rightarrow$ co\^{u}ts quasi identiques entre FMs pour une m\'ethode
+donn\'ee.}
+\label{tab:costs}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+M\'ethode d'adaptation &
+  Params entra\^{\i}nables (approx.) &
+  Inference FLOPs (approx.) \\
+\midrule
+Frozen (head seule) & $\sim$0.13\,M & $\sim$367\,B \\
+MLAP & $\sim$3.7\,M & $\sim$367\,B \\
+Low-rank adapter (LoRA) & $\sim$9.7\,M & $\sim$370--378\,B \\
+End-to-end finetuning & $\sim$88.9\,M & $\sim$367\,B \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{Nombre de param\`etres du backbone\,:} ViT-B/16 standard
+$\approx$~\textbf{86\,M} param\`etres (ordre de grandeur\,; partag\'e par
+les sept FMs). En E2E, $\sim$89\,M entra\^{\i}nables incluent backbone + t\^{e}te.
+
+\noindent
+\textbf{VRAM / GPUs\,:} non sp\'ecifi\'es. Un batch de~256 avec ViT-B et
+clips spatio-temporels n\'ecessite typiquement une agr\'egation multi-GPU
+(ou accumulation de gradients).
+
+%==============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{yuan2024videoglue}
+Liangzhe Yuan et~al.
+\newblock VideoGLUE: Video General Understanding Evaluation of Foundation Models.
+\newblock \emph{Transactions on Machine Learning Research}, 2024.
+\newblock \url{https://arxiv.org/abs/2307.03166}.
+
+\bibitem{sigurdsson2016charades}
+Gunnar~A. Sigurdsson et~al.
+\newblock Hollywood in Homes: Crowdsourcing Data Collection for Activity Understanding.
+\newblock \emph{ECCV}, 2016.
+
+\bibitem{dosovitskiy2021vit}
+Alexey Dosovitskiy et~al.
+\newblock An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale.
+\newblock \emph{ICLR}, 2021.
+
+\end{thebibliography}
+
+\end{document}

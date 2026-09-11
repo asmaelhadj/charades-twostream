@@ -1,0 +1,433 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+
+\hypersetup{colorlinks=true, linkcolor=blue!60!black, urlcolor=blue!60!black}
+
+\title{%
+  \textbf{Progress Report: Two-Stream Action Recognition on Charades}\\[0.4em]
+  \large CNN Baselines and VideoMAE\,V2 Fine-Tuning (Fir \& Nibi)
+}
+\author{Asma\\
+  \textit{Supervisor: Prof.\ \'Eric Hervet}\\
+  \textit{Alliance Canada --- Mitacs project}}
+\date{July 7, 2026}
+
+\begin{document}
+\maketitle
+
+%==============================================================================
+\section{Experimental Setup}
+%==============================================================================
+
+\subsection{Dataset and evaluation protocol}
+
+\textbf{Charades} multi-label action recognition (157 classes). Inputs: RGB frames
+($224\times224$) and precomputed AllenAI optical flow ($x/y$ JPEG pairs). Labels from
+\texttt{Charades\_v1\_\{train,test\}.csv}; each video may have multiple simultaneous
+actions. Compact subsets are staged from \texttt{\$SCRATCH} to node-local SSD per job;
+frame-count sweeps use denser 6\,fps or 12\,fps archives
+(\texttt{charades\_2stream\_subset\_\{6,12\}fps.tar}).
+
+All reported runs use the \textbf{\texttt{train\_test}} protocol: train on the official
+training set; select checkpoints and report final metrics on the official \textbf{test}
+set. 
+
+\textbf{Metrics:} macro mAP (unweighted mean of per-class AP; Charades standard) and
+weighted mAP (AP weighted by positive count). \textbf{Loss:} BCE with sigmoid outputs;
+CNN training optionally uses per-class positive weighting; VideoMAE uses unweighted BCE.
+
+\subsection{Model architectures}
+
+\begin{table}[h]
+\centering
+\caption{CNN two-stream architecture (\texttt{src/models.py}, Fir baselines).}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Component & Details \\
+\midrule
+RGB stream & ResNet-50 (ImageNet-1K), temporal mean pooling over frames \\
+Flow stream & ResNet-50, \texttt{conv1} inflated to $2 \times \texttt{num\_flow}$ channels \\
+Fusion & Late fusion: \texttt{average}, \texttt{weighted}, or \texttt{concat} \\
+Projection & Linear $\rightarrow$ 512-d ReLU before classifier \\
+Classifier & 157 logits (sigmoid at inference) \\
+Temporal chunking & 16 frames per ResNet forward pass (VRAM control) \\
+Grad checkpointing & Enabled for dense/long-frame sweeps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{VideoMAE two-stream architecture (\texttt{src/videomae\_model.py}, Nibi).}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Component & Details \\
+\midrule
+RGB backbone & VideoMAE ViT-Base (\texttt{vit\_base\_patch16\_224}), 3 input channels \\
+Flow backbone & Same ViT-Base architecture, 2 input channels \\
+Pretraining & \texttt{vit\_b\_k710\_dl\_from\_giant.pth} (Kinetics-710, VideoMAEv2) \\
+Flow init & Flow backbone initialized from RGB checkpoint (first 2 patch-embed channels) \\
+Fusion & \texttt{concat} $\rightarrow$ MLP (1536 $\rightarrow$ 512 $\rightarrow$ 157) \\
+Tubelet size & 2; image size $224 \times 224$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Flow \texttt{patch\_embed} is frozen for the first $N$ epochs (3 in the frame sweep,
+5 in the reproducible recipe), then unfrozen.
+
+\subsection{Compute infrastructure}
+
+\begin{table}[h]
+\centering
+\caption{Cluster configuration.}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Cluster & GPU & Primary role in this report \\
+\midrule
+\textbf{Fir} & NVIDIA H100 (80\,GB) & CNN baselines + VideoMAE RGB fine-tuning \\
+\textbf{Nibi} & NVIDIA H100 (80\,GB) & VideoMAE two-stream fine-tuning (in progress) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Both clusters use Python~3.11, PyTorch, and \texttt{charades\_venv}. Data and pretrained
+checkpoints reside on \texttt{\$SCRATCH/charades/}.
+
+\subsection{Hyperparameters --- CNN baselines (Fir)}
+
+Table~\ref{tab:cnn-hparams} lists hyperparameters across CNN experiment groups. Default
+RGB/flow/fusion jobs use the standard 16-frame subset
+(\texttt{charades\_2stream\_subset.tar}, $\sim$16 RGB frames and 10 flow pairs per video).
+
+\begin{table}[h]
+\centering
+\caption{CNN training hyperparameters by experiment group.}
+\label{tab:cnn-hparams}
+\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Experiment group & Epochs & Batch & LR & Weight decay & RGB frames & Flow pairs \\
+\midrule
+\texttt{rgb}, \texttt{flow}, \texttt{fusion\_*} (default) & 25 & 32 / 24 & $10^{-4}$ & $10^{-4}$ & 8 & 10 \\
+\texttt{rgb\_n\{2,4,8,12,16\}\_ctrl} & 25 & 32 & $10^{-4}$ & $10^{-4}$ & 2--16 & 10 \\
+\texttt{rgb\_n\{24,48,96\}\_dense\_e20} & 20 & 16 & $10^{-4}$ & $10^{-4}$ & 24--96 & 10 \\
+\texttt{rgb\_n\{32,64\}\_dense\_e20} & 20 & 16 / 8 & $10^{-4}$ & $10^{-4}$ & 32 / 64 & 10 \\
+\texttt{flow\_n\{32,64\}\_dense\_e20} & 20 & 16 / 8 & $10^{-4}$ & $10^{-4}$ & 8 & 32 / 64 \\
+\texttt{fusion\_*\_n\{32,64\}\_dense\_e20} & 20 & 6 / 3 & $10^{-4}$ & $10^{-4}$ & 32 / 64 & 32 / 64 \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\footnotesize
+All dense sweeps: 12\,fps subset, \texttt{temporal\_chunk=16}, gradient checkpointing enabled.
+Fusion variants: \texttt{average}, \texttt{weighted}, \texttt{concat}.
+\texttt{proj\_dim=512}, \texttt{img\_size=224}, BCE with positive class weighting.
+\end{table}
+
+\subsection{Hyperparameters --- VideoMAE RGB (Fir)}
+
+Completed RGB-only fine-tuning via \texttt{jobs/fir/train\_videomae.sh} on the standard
+16-frame subset (\texttt{charades\_2stream\_subset.tar}).
+
+\begin{table}[h]
+\centering
+\caption{VideoMAE RGB fine-tuning hyperparameters (Fir, \texttt{videomae\_vitb}).}
+\label{tab:vmae-rgb-hparams}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Model & \texttt{vit\_base\_patch16\_224} (3 input channels) \\
+Pretrained checkpoint & \texttt{vit\_b\_k710\_dl\_from\_giant.pth} \\
+Frames per clip & 16 (all stored subset frames) \\
+Epochs & 30 \\
+Batch size & 16 \\
+Peak learning rate & $10^{-3}$ (layer-wise decay 0.75) \\
+Warmup epochs & 2 (cosine to $10^{-6}$) \\
+Weight decay / drop path & 0.05 / 0.1 \\
+Loss & BCE (unweighted) \\
+Protocol & \texttt{train\_test} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Hyperparameters --- VideoMAE two-stream (Nibi)}
+
+The Nibi frame sweep was launched via \texttt{jobs/nibi/sweep\_videomae\_twostream\_frames.sh}
+(array tasks for 16 / 32 / 48 / 64 frames). Table~\ref{tab:vmae-hparams} contrasts the
+\textbf{sweep recipe} (actually used) with the \textbf{reproducible recipe}
+(\texttt{jobs/nibi/train\_videomae\_twostream.sh}).
+
+\begin{table}[h]
+\centering
+\caption{VideoMAE two-stream hyperparameters.}
+\label{tab:vmae-hparams}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Parameter & Frame sweep (Nibi, used) & Reproducible recipe (f16) \\
+\midrule
+Model & \texttt{vit\_base\_patch16\_224} $\times$ 2 & same \\
+Pretrained checkpoint & \texttt{vit\_b\_k710\_dl\_from\_giant.pth} & same \\
+Fusion & \texttt{concat} & \texttt{concat} \\
+Epochs (target) & 30 & 30 \\
+Warmup epochs & 2 & 2 \\
+Peak learning rate & $\mathbf{10^{-3}}$ & $\mathbf{5 \times 10^{-4}}$ \\
+Min learning rate & $10^{-6}$ (cosine) & $10^{-6}$ \\
+Layer-wise LR decay & 0.75 & 0.75 \\
+Weight decay & 0.05 & 0.05 \\
+Drop path & 0.1 & 0.1 \\
+Gradient clipping & --- & 1.0 \\
+Freeze flow embed & 3 epochs & 5 epochs \\
+Random seed & 42 (default) & 42 \\
+Loss & BCE (unweighted) & BCE (unweighted) \\
+Protocol & \texttt{train\_test} & \texttt{train\_test} \\
+Subset & 6\,fps dense (sweep) & 16-frame standard subset \\
+\midrule
+Batch size (16 fr.) & 6 & 6 \\
+Batch size (32 fr.) & 4 (script) / \textbf{2 (actual)} & 4 \\
+Batch size (64 fr.) & 2 (script) / \textbf{1 (actual)} & 2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+\textbf{Note:} Actual batch sizes for f32 and f64 (2 and 1) differ from script defaults,
+indicating manual reduction after out-of-memory (OOM) errors.
+
+%==============================================================================
+\section{Results}
+%==============================================================================
+
+\noindent
+Table~\ref{tab:headline} highlights the strongest completed runs at comparable settings;
+full CNN sweeps follow in Table~\ref{tab:fir-results}.
+
+\begin{table}[h]
+\centering
+\caption{Headline results }
+\label{tab:headline}
+\small
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Run & Cluster & Macro mAP & Weighted mAP \\
+\midrule
+\textbf{\texttt{videomae\_vitb}} (16 RGB fr., 30 ep.) & Fir & \textbf{0.3259} & \textbf{0.4238} \\
+\texttt{rgb\_n32\_dense\_e20} (32 RGB fr., 20 ep.) & Fir & 0.1701 & 0.2380 \\
+\texttt{rgb\_n16\_ctrl} (16 RGB fr., 25 ep.) & Fir & 0.1690 & 0.2338 \\
+\texttt{fusion\_weighted} (8 RGB + 10 flow) & Fir & 0.1649 & 0.2307 \\
+\texttt{flow} (10 flow pairs) & Fir & 0.0989 & 0.1544 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{CNN baselines on Fir (completed runs)}
+
+\begin{table}[h]
+\centering
+\caption{CNN baseline results on Fir }
+\label{tab:fir-results}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Run & Macro mAP & Weighted mAP \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Single-stream defaults (16-frame subset)}} \\
+\texttt{rgb} & 0.1616 & 0.2243 \\
+\texttt{flow} & 0.0989 & 0.1544 \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Fusion (default frames)}} \\
+\texttt{fusion\_weighted} & \textbf{0.1649} & \textbf{0.2307} \\
+\texttt{fusion\_average} & 0.1610 & 0.2269 \\
+\texttt{fusion\_concat} & 0.1519 & 0.2143 \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{RGB frame-count control (fixed batch\,=\,32, 25 epochs)}} \\
+\texttt{rgb\_n2\_ctrl} & 0.1316 & 0.1938 \\
+\texttt{rgb\_n4\_ctrl} & 0.1549 & 0.2176 \\
+\texttt{rgb\_n8\_ctrl} & 0.1620 & 0.2268 \\
+\texttt{rgb\_n12\_ctrl} & 0.1672 & 0.2290 \\
+\texttt{rgb\_n16\_ctrl} & 0.1690 & 0.2338 \\
+\midrule
+\multicolumn{3}{@{}l}{\textit{Dense 12\,fps sweeps (20 epochs)}} \\
+\texttt{rgb\_n32\_dense\_e20} & \textbf{0.1701} & \textbf{0.2380} \\
+\texttt{rgb\_n64\_dense\_e20} & 0.1600 & 0.2231 \\
+\texttt{flow\_n32\_dense\_e20} & 0.1086 & 0.1707 \\
+\texttt{flow\_n64\_dense\_e20} & 0.1069 & 0.1725 \\
+\texttt{fusion\_average\_n32\_dense\_e20} & 0.1403 & 0.2052 \\
+\texttt{fusion\_average\_n64\_dense\_e20} & 0.0964 & 0.1545 \\
+\texttt{fusion\_concat\_n32\_dense\_e20} & 0.1119 & 0.1758 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{VideoMAE RGB on Fir (completed)}
+
+\begin{table}[h]
+\centering
+\caption{VideoMAE RGB results on Fir (protocol: \texttt{train\_test}).}
+\label{tab:fir-videomae}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Run & Macro mAP & Weighted mAP \\
+\midrule
+\textbf{\texttt{videomae\_vitb}} & \textbf{0.3259} & \textbf{0.4238} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent
+At 16 frames per video, \texttt{videomae\_vitb} nearly doubles the best CNN result
+(\texttt{rgb\_n32\_dense\_e20}, 0.1701 macro mAP) and exceeds the 16-frame RGB control
+(\texttt{rgb\_n16\_ctrl}, 0.1690) by \textbf{+15.7 percentage points}.
+
+
+\subsection{VideoMAE two-stream on Nibi (partial runs)}
+
+\begin{table}[h]
+\centering
+\caption{VideoMAE two-stream results on Nibi (protocol: \texttt{train\_test}). Test macro and test weighted mAP from \texttt{per\_class\_ap.json}. All jobs terminated before 30 epochs; f64 evaluation did not complete.}
+\label{tab:nibi-results}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Run & Epochs & Batch & Test macro & Test wtd \\
+\midrule
+\texttt{videomae\_twostream\_vitb\_f16} & 8 / 30 & 6 & \textbf{0.2545} & \textbf{0.3481} \\
+\texttt{videomae\_twostream\_vitb\_f32} & 4 / 30 & 2 & 0.0852 & 0.1406 \\
+\texttt{videomae\_twostream\_vitb\_f64} & 3 / 30 & 1 &  0.0652  & 0.1091 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================================
+\section{Discussion}
+%==============================================================================
+
+\subsection{CNN baselines}
+
+\begin{itemize}[noitemsep]
+  \item RGB substantially outperforms flow alone ($\sim$0.16 vs.\ $\sim$0.10 macro mAP).
+  \item Among default-frame fusion strategies, \textbf{weighted} fusion is marginally best
+        (0.1649), but gains over RGB-only (0.1616) are modest ($\sim$+0.3\,pp).
+  \item Increasing RGB frames from 2 to 16 (control sweep) monotonically improves mAP
+        (0.132 $\rightarrow$ 0.169), confirming temporal context matters.
+  \item The best \textbf{completed} CNN result is \texttt{rgb\_n32\_dense\_e20} at
+        \textbf{0.1701} macro mAP (12\,fps subset, 32 frames, 20 epochs).
+  \item At 64 dense frames, RGB mAP \emph{decreases} slightly (0.1600), and fusion at
+        64 frames collapses (0.0964), suggesting optimization difficulty or overfitting
+        with very long clips under the CNN architecture.
+\end{itemize}
+
+\subsection{VideoMAE vs.\ CNN baselines}
+
+\textbf{Completed RGB-only VideoMAE on Fir} (\texttt{videomae\_vitb}, 30 epochs,
+16 frames) reaches \textbf{0.3259 macro mAP} and \textbf{0.4238 weighted mAP} ---
+\textbf{+15.6 percentage points} over the best CNN (\texttt{rgb\_n32\_dense\_e20},
+0.1701; +92\% relative) and \textbf{+15.7 pp} over \texttt{rgb\_n16\_ctrl} (0.1690)
+at matched frame count. This confirms the gap reported to the supervisor
+($\sim$32.6\% vs.\ $\sim$16.9\% at 16 frames).
+
+Several factors likely contribute to this gap:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{Stronger pretrained representations:} ViT-Base trained on Kinetics-710 via
+        masked video modeling vs.\ ImageNet-1K ResNet-50.
+  \item \textbf{Native temporal modeling:} VideoMAE processes spatiotemporal tubelets
+        jointly; CNNs pool frame-wise features with simple temporal averaging.
+  \item \textbf{End-to-end clip encoding:} a single ViT consumes all 16 frames as one
+        spatiotemporal volume rather than independent per-frame ResNet passes.
+\end{enumerate}
+
+\textbf{VideoMAE two-stream on Nibi} (\texttt{videomae\_twostream\_vitb\_f16}) reached
+0.2545 macro mAP after only \textbf{8 of 30 epochs} --- above all CNN baselines but
+\textbf{below} the completed RGB-only Fir run (0.3259). Two-stream training is harder
+(two ViT backbones, OOM at longer clips) and was stopped early; a fair comparison
+requires completing the two-stream recipe and an RGB-only baseline on Nibi at matched
+settings.
+
+From \texttt{history.json} on Nibi: f16 peaked at 0.2545 after 8 epochs (LR $10^{-3}$,
+flow embed frozen 3 epochs); f32 reached 0.0852 after 4 epochs (batch 2, OOM); f64
+reached 0.0652 after 3 epochs (batch 1).
+
+\subsection{Interpreting the incomplete frame sweep on Nibi}
+
+The apparent degradation from f16 $\rightarrow$ f32 $\rightarrow$ f64
+(0.2545 $\rightarrow$ 0.0852 $\rightarrow$ 0.0652) \textbf{cannot be interpreted as a
+frame-count trend} at this stage because:
+
+\begin{itemize}[noitemsep]
+  \item Training duration decreased (8, 4, 3 epochs), correlating with lower mAP.
+  \item Batch sizes were reduced (6, 2, 1), slowing convergence and increasing gradient noise.
+  \item Higher learning rate ($10^{-3}$) in the sweep may cause instability when the flow
+        embed is unfrozen, especially at larger clip lengths.
+\end{itemize}
+
+A fair frame-count ablation requires \textbf{completed} 30-epoch runs with matched
+optimization settings.
+
+\subsection{Flow contribution}
+
+On CNN baselines, adding flow via fusion yields only small gains over RGB-only at default
+frame counts (weighted fusion: 0.1649 vs.\ RGB 0.1616). The completed
+\texttt{videomae\_vitb} run establishes a strong RGB-only VideoMAE ceiling (0.3259);
+once Nibi two-stream training finishes, comparing against
+\texttt{jobs/nibi/train\_videomae\_rgb.sh} will show whether flow adds value at the
+transformer level.
+
+%==============================================================================
+\section{Challenges Encountered}
+%==============================================================================
+
+\begin{enumerate}[leftmargin=*]
+
+  \item \textbf{GPU memory (OOM) for long clips.}
+  Two-stream VideoMAE loads \emph{two} ViT-Base backbones simultaneously. At 32 and 64
+  frames, the default batch sizes (4 and 2) exceeded available H100 memory; batches were
+  reduced to 2 and 1 respectively. CNN baselines mitigate this via temporal chunking
+  (16 frames per forward) and gradient checkpointing; VideoMAE currently lacks an
+  equivalent chunking strategy.
+
+  \item \textbf{Job termination before target epochs.}
+  All three Nibi sweep jobs stopped well short of 30 epochs (8, 4, 3). Likely causes
+  include Slurm time limits (\texttt{--time=36:00:00} on the sweep array), node
+  preemption, or training crashes. The f64 run failed before the post-training evaluation
+  step, leaving no \texttt{per\_class\_ap.json}.
+
+  \item \textbf{Learning-rate sensitivity.}
+  The frame sweep uses peak LR $= 10^{-3}$. Internal documentation
+  (\texttt{docs/nibi/REPRODUCE.md}) notes that $10^{-3}$ can produce NaN losses after
+  unfreezing the flow patch embedding, whereas $5 \times 10^{-4}$ with gradient clipping
+  is more stable. The sweep recipe and the reproducible recipe therefore differ; future
+  runs should align with the stable recipe or use a lower LR on resume.
+  
+\end{enumerate}
+
+%==============================================================================
+\section{Next Steps}
+%==============================================================================
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Resume and complete f16 training} to epoch~30 using
+        \texttt{jobs/nibi/resume\_videomae\_twostream.sh} with a reduced learning rate
+        ($10^{-4}$) to preserve the strong epoch-8 checkpoint.
+  \item \textbf{Run the reproducible f16 recipe} from epoch~1
+        (LR $= 5 \times 10^{-4}$, freeze flow embed 5 epochs, grad clip 1.0) as an
+        independent confirmation.
+  \item \textbf{Diagnose sweep job failures} via Slurm logs
+        (\texttt{runs/nibi\_vmae2s\_frames-*.out}) and \texttt{sacct}.
+  \item \textbf{Re-run f32/f64} with extended wall time, stable LR, and OOM-safe batch
+        sizes after f16 is complete.
+  
+\end{enumerate}
+
+\end{document}

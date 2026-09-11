@@ -1,0 +1,12 @@
+# Installed on Narval from the Alliance wheelhouse with: pip install --no-index <pkg>
+# Versions are intentionally unpinned: on Narval you install whatever the wheelhouse
+# provides for the loaded StdEnv. Run `avail_wheels torch` to see what is available.
+torch
+torchvision
+numpy
+pandas
+scikit-learn
+pillow
+tqdm
+matplotlib
+seaborn

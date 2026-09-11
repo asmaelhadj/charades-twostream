@@ -1,0 +1,42 @@
+# Training outputs and checkpoints
+runs/*
+!runs/.gitkeep
+*.pth
+*.pt
+*.ckpt
+*.bin
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Datasets / large archives (keep on $SCRATCH)
+*.tar
+*.tar.gz
+*.zip
+Charades*/
+data/archives/
+
+# LaTeX build junk
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Notebooks / local experiments
+.ipynb_checkpoints/
+*.ipynb
